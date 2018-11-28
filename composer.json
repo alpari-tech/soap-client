@@ -1,0 +1,19 @@
+{
+    "name": "alpari/soap-client",
+    "description": "Soap client with additional features",
+    "type": "library",
+    "license": "MIT",
+    "minimum-stability": "stable",
+    "require": {
+        "php": "~7.1",
+        "psr/log": "^1.1"
+    },
+    "require-dev": {
+        "symfony/browser-kit": "^4.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Alpari\\SoapClient\\": "src"
+        }
+    }
+}
