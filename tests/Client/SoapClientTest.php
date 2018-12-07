@@ -1,5 +1,4 @@
 <?php
-
 /*
  * This file is part of the Soap client.
  *
@@ -93,7 +92,11 @@ class SoapClientTest extends TestCase
 
     public function testAsyncRequest(): void
     {
-        $requests = ['First request', 'Second request'];
+        $requests = [];
+        for ($i = 0; $i < 20; $i++) {
+            $requests[] = "Request $i";
+        }
+
         $responses = $this->client->async(function (SoapClient $client) use ($requests) {
             foreach ($requests as $request) {
                 $client->echoString($request);
@@ -207,7 +210,7 @@ class SoapClientTest extends TestCase
     }
 
     /**
-     * @expectedException Alpari\Components\SoapClient\Exception\SoapFaultTimeout
+     * @expectedException \Alpari\Components\SoapClient\Exception\TimeoutSoapFault
      * @expectedExceptionMessageRegExp /Operation timed out after \d+ milliseconds with 0 bytes received/
      */
     public function testTimeoutRequest(): void
@@ -223,19 +226,30 @@ class SoapClientTest extends TestCase
     }
 
     /**
-     * @param bool $isEnabled
+     * @param bool        $isEnabled
+     * @param string|null $prefix
+     * @param string|null $expectedCacheName
      *
      * @return void
      * @dataProvider wsdlCachingDataProvider
      */
-    public function testCachingWsdl(bool $isEnabled): void
+    public function testCachingWsdl(bool $isEnabled, ?string $prefix, ?string $expectedCacheName): void
     {
         ini_set('soap.wsdl_cache_enabled', (string) (int) $isEnabled);
         ini_set('soap.wsdl_cache_dir', vfsStreamWrapper::getRoot()->url());
 
-        $this->client->echoString('no matter what is written here');
+        $client = new SoapClient($this->getWsdlServerUrl(), ['cache_prefix' => $prefix]);
+
+        $client->echoString('no matter what is written here');
 
         self::assertSame($isEnabled, vfsStreamWrapper::getRoot()->hasChildren());
+        if ($expectedCacheName !== null) {
+            foreach (vfsStreamWrapper::getRoot()->getChildren() as $child) {
+                break;
+            }
+
+            self::assertRegExp($expectedCacheName, $child->getName());
+        }
     }
 
     /**
@@ -352,7 +366,12 @@ class SoapClientTest extends TestCase
 
     public function wsdlCachingDataProvider(): array
     {
-        return [[false], [true]];
+        return [
+            [false, null, null],
+            [true, null, '/^[0-9a-f]{32}\.wsdl$/'],
+            [true, '', '/^[0-9a-f]{32}\.wsdl$/'],
+            [true, 'xWSDLka-', '/^xWSDLka-[0-9a-f]{32}\.wsdl$/'],
+        ];
     }
 
     /**

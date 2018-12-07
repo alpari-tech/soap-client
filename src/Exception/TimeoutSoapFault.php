@@ -1,5 +1,4 @@
 <?php
-
 /*
  * This file is part of the Soap client.
  *
@@ -11,5 +10,14 @@
 
 declare (strict_types=1);
 
-require_once __DIR__ . '/../vendor/autoload.php';
-require_once 'stubs.php';
+namespace Alpari\Components\SoapClient\Exception;
+
+use SoapFault;
+
+/**
+ * Exception that thrown when timeout occurred during the service call
+ */
+class TimeoutSoapFault extends SoapFault
+{
+
+}

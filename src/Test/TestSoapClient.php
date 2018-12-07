@@ -1,5 +1,4 @@
 <?php
-
 /*
  * This file is part of the Soap client.
  *
@@ -60,7 +59,8 @@ class TestSoapClient extends SoapClient
      */
     protected function performCurlRequest(
         string $serviceUrl,
-        int $soapVersion,
+        ?string $action,
+        ?int $soapVersion,
         array $addCurlOpts = [],
         string $request = ''
     ): array {

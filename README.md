@@ -12,7 +12,7 @@ Extended PHP soap client with additional features.
  
 ## Prerequisites
 
-The `soap`, `curl`, `libxml` extensions must be pre-installed on the server in order to use this library.
+The `soap`, `dom`, `curl`, `libxml` extensions must be pre-installed on the server in order to use this library.
 
 ## Installing
 
@@ -22,7 +22,7 @@ The recommended way is using a [composer](https://getcomposer.org/download/)
 $ composer require alpari/soap-client:~1.0 --prefer-dist|--prefer-source
 ```
 
-## Example usage
+## Usage
 
 ### Simple SOAP request
 
@@ -92,6 +92,17 @@ $client->setLogger(new NullLogger());
 $result = $client->targetServiceMethod(1, 2);
 ```
 
+### SOAP client constructor options
+
+This implementation of SOAP client supports additional array of options:
+
+ - `local_cert` - client certificate file name to use for SSL connection.
+ - `local_key` - private for client certificate, if it is stored as a separate file.
+ - `passphrase` - password for certificate private key.
+ - `ca_bundle` - file name with trusted CAs for verifying server certificate. If not provided, the system one is used.
+ - `curl` - array with additional curl options. See all possible options [here](http://php.net/manual/en/function.curl-setopt.php).
+ - `cache_prefix` - file name prefix for generated wsdl cache file names 
+ 
 ### Testing own SOAP servers
 
 To test your own SOAP server you need to install additional packages if you steel don't have them
@@ -125,7 +136,7 @@ class SoapServiceTest extends WebTestCase
 
 If the project is based on some other framework you will need an implementation of `Symfony\Component\HttpKernel\HttpKernelInterface`
 in your test which will redirect all calls to application's entry point and return
-symfone `Response` object:
+symfony `Response` object:
 
 ```php
 use PHPUnit\Framework\MockObject\MockObject;
@@ -162,7 +173,7 @@ class SoapServiceTest extends TestCase
 
 Tests are written with phpunit. To run the tests use the following command:
 
-```php
+```bash
 vendor/bin/phpunit -c phpunit.xml.dist
 ```
 

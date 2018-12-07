@@ -1,5 +1,4 @@
 <?php
-
 /*
  * This file is part of the Soap client.
  *
@@ -13,10 +12,12 @@ declare (strict_types=1);
 
 namespace Alpari\Components\SoapClient\Exception;
 
+use RuntimeException;
+
 /**
- * Asynchronous query object exception
+ * Asynchronous query object exception. You will not catch it in client code
  */
-class AsyncPromiseException extends \RuntimeException
+class DelayedRequestException extends RuntimeException
 {
 
     /**
