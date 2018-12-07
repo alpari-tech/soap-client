@@ -11,16 +11,16 @@
 
 declare (strict_types=1);
 
-namespace Alpari\SoapClient\Client;
+namespace Alpari\Components\SoapClient\Client;
 
-use Alpari\SoapClient\Exception\AsyncPromiseException;
-use Alpari\SoapClient\Exception\SoapFaultTimeout;
+use Alpari\Components\SoapClient\Exception\AsyncPromiseException;
+use Alpari\Components\SoapClient\Exception\SoapFaultTimeout;
 use DOMDocument;
 use LibXMLError;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
 use RuntimeException;
-use SoapClient;
+use SoapClient as PhpSoapClient;
 use SoapFault;
 use SoapVar;
 
@@ -30,7 +30,7 @@ use SoapVar;
  * Extends standard PHP SoapClient class.
  * Comparing with original class, __doRequest() method was overridden to support timeouts.
  */
-class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
+class SoapClient extends PhpSoapClient implements LoggerAwareInterface
 {
     use LoggerAwareTrait;
 
@@ -40,11 +40,18 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
     private const WSDL_CACHE_RELATIVE_PATH_PATTERN = 'alpari.wsdl-%s-%s';
 
     /**
-     * Cookies
+     * Last request body as SOAP request
      *
-     * @var array
+     * @var string
      */
-    protected $cookies = [];
+    protected $lastRequestBody = '';
+
+    /**
+     * Last response body as SOAP request
+     *
+     * @var string
+     */
+    protected $lastResponseBody = '';
 
     /**
      * Last response headers
@@ -128,7 +135,7 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
     protected $asyncQueries;
 
     /**
-     * Forced CURL query for handling multi-queries inside SoapClientTimeout
+     * Forced CURL query for handling multi-queries inside $
      *
      * @var resource
      */
@@ -140,6 +147,13 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
      * @var string
      */
     protected $forcedResponse;
+
+    /**
+     * Array where key is curl protocol
+     *
+     * @var array
+     */
+    protected $curlSupportedProtocols;
 
     /**
      * Default constructor for soap client with timeout
@@ -169,12 +183,13 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
         $this->wsdl = $wsdl;
         $this->parentOptions = $parentOptions;
 
+        $this->curlSupportedProtocols = array_change_key_case(array_flip(curl_version()['protocols']), CASE_LOWER);
     }
 
     /**
      * Set timeout
      *
-     * @param int $timeout Timeout in sec
+     * @param int $timeout Timeout in milli-sec
      *
      * @return self
      */
@@ -186,16 +201,20 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
     }
 
     /**
-     * Set a HTTP header for request
+     * Set a HTTP header for request. If value is null, the header will be deleted
      *
      * @param string $name Header name
      * @param mixed $value Mixed value, must be castable to string
      *
      * @return self
      */
-    public function setHeader(string $name, $value): self
+    public function setHeader(string $name, $value = null): self
     {
-        $this->options['headers'][$name] = $value;
+        if ($value === null) {
+            unset ($this->options['headers'][$name]);
+        } else {
+            $this->options['headers'][$name][] = $value;
+        }
 
         return $this;
     }
@@ -206,9 +225,9 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
     public function __setCookie($name, $value = null)
     {
         if ($value === null) {
-            unset ($this->cookies[$name]);
+            parent::__setCookie($name);
         } else {
-            $this->cookies[$name] = "{$name}={$value}";
+            parent::__setCookie($name, (string) $value);
         }
     }
 
@@ -229,6 +248,22 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
     }
 
     /**
+     * {@inheritdoc}
+     */
+    public function __getLastRequest()
+    {
+        return $this->lastRequestBody;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function __getLastResponse()
+    {
+        return $this->lastResponseBody;
+    }
+
+    /**
      * Returns an information about last request
      *
      * @see http://php.net/manual/en/function.curl-getinfo.php
@@ -245,7 +280,7 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
      *
      * {@inheritdoc}
      */
-    public function __soapCall($function, array $arguments, array $options = null, $inputHeaders = null, array &$outputHeaders = null)
+    public function __soapCall($function, $arguments, $options = null, $inputHeaders = null, &$outputHeaders = null)
     {
         if (!$this->initialized) {
             $this->init();
@@ -344,7 +379,7 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
                 ]
             );
         }
-        [$responseHeaders, $responseBody] = $this->performCurlRequest($serviceUrl, [], $requestBody);
+        [$responseHeaders, $responseBody] = $this->performCurlRequest($serviceUrl, $version, [], $requestBody);
         if ($this->logger !== null) {
             $this->logger->debug('Request finished', $this->lastRequestInfo);
         }
@@ -367,7 +402,7 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
     public function async(callable $callable): array
     {
         if ($this->isAsync) {
-            throw new SoapFault('Client', 'Nested asynchronous calls are not supported');
+            throw new SoapFault('Client', 'Nested asynchronous calls are not supported.');
         }
 
         try {
@@ -390,14 +425,13 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
 
         // Async reading and synchronization
         do {
-            /** @noinspection MissingOrEmptyGroupStatementInspection */
-            /** @noinspection LoopWhichDoesNotLoopInspection */
             while (CURLM_CALL_MULTI_PERFORM === curl_multi_exec($multiSoapQuery, $active)) {
             }
             if (!$active) {
                 break;
             }
             curl_multi_select($multiSoapQuery);
+            usleep(50000);
         } while (true);
 
         curl_multi_close($multiSoapQuery);
@@ -444,23 +478,22 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
      * Performs curl request and fills lastRequestInfo and lastResponseHeaders
      * Makes POST-request by default
      *
-     * @param string $serviceUrl url to be requested
-     * @param array $addCurlOpts list of additional curl options to replace default ones
-     * ATTENTION! use this option to replace only $baseCurlOptions from prepareConnection
-     * to decorate current request (or add opposite parameter to $baseCurlOptions from prepareConnection)!
-     * Otherwise you can apply your options for all next requests
+     * @param string $serviceUrl  url to be requested
+     * @param int    $soapVersion Version of SOAP request
+     * @param array  $addCurlOpts list of additional curl options to replace default ones
+     *                            ATTENTION! use this option to replace only $baseCurlOptions from prepareConnection
+     *                            to decorate current request (or add opposite parameter to $baseCurlOptions from prepareConnection)!
+     *                            Otherwise you can apply your options for all next requests
      *
      * @param string $requestBody request body
      *
-     * @throws SoapFaultTimeout in case of timeout
-     * @throws SoapFault in case of fault
-     * @throws AsyncPromiseException For delayed responses with current query
-     *
      * @return array with response headers and response body
+     * @throws SoapFault in case of fault
+     * @throws SoapFaultTimeout in case of timeout
      */
-    protected function performCurlRequest(string $serviceUrl, array $addCurlOpts = [], string $requestBody = ''): array
+    protected function performCurlRequest(string $serviceUrl, int $soapVersion, array $addCurlOpts = [], string $requestBody = ''): array
     {
-        $curlRequest = $this->prepareConnection($requestBody, $serviceUrl, $addCurlOpts);
+        $curlRequest = $this->prepareConnection($requestBody, $serviceUrl, $soapVersion, $addCurlOpts);
 
         if ($this->isAsync) {
             throw new AsyncPromiseException($curlRequest);
@@ -495,7 +528,9 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
         }
 
         $this->lastRequestInfo     = $curlInfo;
+        $this->lastRequestBody     = $requestBody;
         $this->lastResponseHeaders = $responseHeaders;
+        $this->lastResponseBody    = $responseBody;
 
         return [$responseHeaders, $responseBody];
     }
@@ -503,13 +538,14 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
     /**
      * Initializes a new CURL connection or reuses current one
      *
-     * @param string $request Content for request
-     * @param string $serviceUrl Absolute URL for performing request
-     * @param array $addCurlOpts Additional CURL options for request
+     * @param string $request     Content for request
+     * @param string $serviceUrl  Absolute URL for performing request
+     * @param int    $soapVersion Version of SOAP request
+     * @param array  $addCurlOpts Additional CURL options for request
      *
      * @return resource
      */
-    protected function prepareConnection($request, $serviceUrl, array $addCurlOpts = [])
+    protected function prepareConnection(string $request, string $serviceUrl, int $soapVersion, array $addCurlOpts = [])
     {
         if ($this->forcedQuery) {
             return $this->forcedQuery;
@@ -527,9 +563,14 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
         }
 
         $curlRequest = $connections[$host][$port];
-        $headers     = $this->prepareHeaders($request, $host);
+        $headers     = $this->prepareHeaders($request, $soapVersion, $host);
+
+        $cookies = $this->prepareCookies();
 
         $this->lastRequestHeaders = implode("\r\n", $headers);
+        if (!empty($cookies)) {
+            $this->lastRequestHeaders .= "\r\nCookie: $cookies";
+        }
 
         $options = $this->options['curl'];
 
@@ -541,10 +582,11 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
             CURLOPT_POSTFIELDS     => $request,
             CURLOPT_HEADER         => true,
             CURLOPT_HTTPHEADER     => $headers,
-            CURLOPT_TIMEOUT_MS     => ($this->options['timeout'] ?? ini_get('default_socket_timeout')) * 1e3,
+            CURLOPT_TIMEOUT_MS     => $this->options['timeout'] ?? ini_get('default_socket_timeout') * 1e3,
             CURLOPT_FOLLOWLOCATION => false,
             // handling servers faults by soap internal handler by default
             CURLOPT_FAILONERROR    => false,
+            CURLOPT_COOKIE         => $cookies,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2, // verify server CN
         ];
@@ -559,23 +601,19 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
 
         curl_setopt_array($curlRequest, $addCurlOpts + $baseCurlOptions + $options);
 
-        // attach cookies if they were set
-        if ($this->cookies) {
-            curl_setopt($curlRequest, CURLOPT_COOKIE, implode('; ', $this->cookies));
-        }
-
         return $curlRequest;
     }
 
     /**
      * Prepare headers for CURL format
      *
-     * @param string $request Content for request
-     * @param string $host Name of the host to connect
+     * @param string $request     Content for request
+     * @param int    $soapVersion Version of SOAP protocol
+     * @param string $host        Name of the host to connect
      *
      * @return array
      */
-    protected function prepareHeaders(string $request, string $host): array
+    protected function prepareHeaders(string $request, int $soapVersion, ?string $host): array
     {
         $origin  = $_SERVER['HTTP_HOST'] ?? gethostname();
         $referer = $origin . ($_SERVER['REQUEST_URI'] ?? '');
@@ -583,17 +621,42 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
         $headers = [
             'Host'           => $host,
             'Connection'     => !empty($this->parentOptions['keep_alive']) ? 'Keep-Alive' : 'Close',
-            'Content-Type'   => 'application/soap+xml; charset=utf-8',
             'Content-Length' => \strlen($request),
             'Expect'         => '',
             'Referer'        => $referer
-            ] + array_map(function ($item): string { return (string) $item; }, $this->options['headers']);
+            ] + $this->options['headers'];
 
-        $headers = array_map(function ($header, $value) {
-            return $header . ': ' . $value;
-        }, array_keys($headers), array_values($headers));
+        if (!isset($this->options['headers']['Content-Type'])) {
+            $headers['Content-Type'] = $soapVersion === SOAP_1_1
+                ? 'text/xml; charset=utf-8'
+                : 'application/soap+xml; charset=utf-8';
+        }
 
-        return $headers;
+        $result = [];
+        foreach ($headers as $header => $values) {
+            foreach ((array) $values as $value) {
+                $result[] = $header . ': ' . $value;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Creates server cookie string
+     *
+     * @return string
+     */
+    protected function prepareCookies(): string
+    {
+        $result = [];
+        foreach ($this->__getCookies() as $name => $values) {
+            foreach ($values as $value) {
+                $result[] = "$name=$value";
+            }
+        }
+
+        return implode('; ', $result);
     }
 
     /**
@@ -677,16 +740,21 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
         $this->isAsync = false;
 
         // perform GET-request with redirects following in order to get wsdl content
-        [, $wsdl] = $this->performCurlRequest(
-            $this->wsdl,
-            [
-                CURLOPT_POST           => false,
-                CURLOPT_CUSTOMREQUEST  => 'GET',
-                CURLOPT_FOLLOWLOCATION => true,
-                // in case of all fails (server 400+ response codes, network problems, etc) we are waiting for exceptions.
-                CURLOPT_FAILONERROR    => true,
-            ]
-        );
+        $scheme = parse_url($this->wsdl, PHP_URL_SCHEME);
+
+        [, $wsdl] = $scheme !== null && isset($this->curlSupportedProtocols[strtolower($scheme)])
+            ? $this->performCurlRequest(
+                  $this->wsdl,
+                  SOAP_1_1,
+                  [
+                      CURLOPT_POST           => false,
+                      CURLOPT_CUSTOMREQUEST  => 'GET',
+                      CURLOPT_FOLLOWLOCATION => true,
+                      // in case of all fails (server 400+ response codes, network problems, etc) we are waiting for exceptions.
+                      CURLOPT_FAILONERROR    => true,
+                  ]
+              )
+            : [null, file_get_contents($this->wsdl)];
 
         $this->isAsync = $oldAsyncMode;
 
@@ -768,16 +836,16 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
      *
      * @return void
      */
-    private function cacheWsdl($wsdlContent): void
+    private function cacheWsdl(string $wsdlContent): void
     {
         $cacheFile = $this->getWsdlCachePath();
         $dir       = \dirname($cacheFile);
         if (!is_dir($dir)) {
             if (!mkdir($dir, 0777, true) && !is_dir($dir)) {
-                throw new RuntimeException(sprintf('Unable to create the %s directory for wsdl cache', $dir));
+                throw new RuntimeException(sprintf('Unable to create the "%s" directory for wsdl cache', $dir));
             }
         } elseif (!is_writable($dir)) {
-            throw new RuntimeException(sprintf('Unable to write in the %s directory', $dir));
+            throw new RuntimeException(sprintf('Unable to write in the "%s" directory', $dir));
         }
 
         $tmpFile = tempnam(\dirname($cacheFile), basename($cacheFile));
@@ -792,20 +860,20 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
      * Loads wsdl content from cache, returns content in case of success
      * and false in case of failure or when cache is not fresh
      *
-     * @return bool|string
+     * @return string|null
      */
-    private function loadWsdlFromCache()
+    private function loadWsdlFromCache(): ?string
     {
         $cacheTtl  = (int) ini_get('soap.wsdl_cache_ttl');
         $cacheFile = $this->getWsdlCachePath();
 
         if (!file_exists($cacheFile) || !is_readable($cacheFile)) {
-            return false;
+            return null;
         }
 
         $isFresh = filemtime($cacheFile) + $cacheTtl > time();
         if (!$isFresh) {
-            return false;
+            return null;
         }
 
         return file_get_contents($cacheFile);
@@ -823,8 +891,12 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
         // we should use process owner name instead of script owner name in order to avoid concurrency in cache generating
         $processUser = posix_getpwuid(posix_geteuid());
 
-        return $cacheDir.DIRECTORY_SEPARATOR.sprintf(
-            static::WSDL_CACHE_RELATIVE_PATH_PATTERN, $processUser['name'], md5($this->wsdl)
+        return sprintf(
+            '%s%salpari.wsdl-%s-%s',
+            rtrim($cacheDir, DIRECTORY_SEPARATOR),
+            DIRECTORY_SEPARATOR,
+            $processUser['name'],
+            md5($this->wsdl)
         );
     }
 
@@ -839,11 +911,9 @@ class SoapClientTimeout extends SoapClient implements LoggerAwareInterface
      */
     private function isWaitingForOneWay(): bool
     {
-        if (!isset($this->_features)) {
-            return false;
-        }
+        $features = $this->_features ?? 0;
 
-        return (bool) ($this->_features & SOAP_WAIT_ONE_WAY_CALLS);
+        return (bool) ($features & SOAP_WAIT_ONE_WAY_CALLS);
     }
 
     /**

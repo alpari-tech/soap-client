@@ -11,15 +11,16 @@
 
 declare (strict_types=1);
 
-namespace Alpari\SoapClient\Client;
+namespace Alpari\Components\SoapClient\Test;
 
+use Alpari\Components\SoapClient\Client\SoapClient;
 use Symfony\Component\BrowserKit\Client;
 
 /**
  * Test soap client that emulates soap call
  * Useful for web-services testing
  */
-class TestSoapClient extends SoapClientTimeout
+class TestSoapClient extends SoapClient
 {
     /**
      * Framework test client
@@ -52,5 +53,19 @@ class TestSoapClient extends SoapClientTimeout
     {
         $this->client->request('POST', $location, [], [], [], $request);
         return $this->client->getResponse()->getContent();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function performCurlRequest(
+        string $serviceUrl,
+        int $soapVersion,
+        array $addCurlOpts = [],
+        string $request = ''
+    ): array {
+        $this->client->request('POST', $serviceUrl, [], [], [], $request);
+
+        return explode("\r\n\r\n", (string) $this->client->getResponse());
     }
 }

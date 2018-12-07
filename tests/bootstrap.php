@@ -11,14 +11,5 @@
 
 declare (strict_types=1);
 
-namespace Alpari\Components\SoapClient\Exception;
-
-use SoapFault;
-
-/**
- * Exception that thrown when timeout occurred during the service call
- */
-class SoapFaultTimeout extends SoapFault
-{
-
-}
+require_once __DIR__ . '/../vendor/autoload.php';
+require_once 'stubs.php';

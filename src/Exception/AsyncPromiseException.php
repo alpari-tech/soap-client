@@ -11,7 +11,7 @@
 
 declare (strict_types=1);
 
-namespace Alpari\SoapClient\Exception;
+namespace Alpari\Components\SoapClient\Exception;
 
 /**
  * Asynchronous query object exception
