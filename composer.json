@@ -1,0 +1,38 @@
+{
+    "name": "alpari/soap-client",
+    "type": "library",
+    "description": "Soap client with additional features",
+    "license": "MIT",
+    "require": {
+        "php": "~7.1",
+        "ext-curl": "*",
+        "ext-dom": "*",
+        "ext-libxml": "*",
+        "ext-soap": "*",
+        "psr/log": "^1.1"
+    },
+    "require-dev": {
+        "mikey179/vfsStream": "^1.6",
+        "phpunit/phpunit": "~7",
+        "symfony/browser-kit": "^4.1",
+        "symfony/http-kernel": "^4.2",
+        "symfony/process": "^4.2",
+        "zendframework/zend-soap": "^2.7"
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-master": "1.x-dev"
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Alpari\\Components\\SoapClient\\": "src"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Alpari\\Components\\SoapClient\\": "tests"
+        }
+    },
+    "minimum-stability": "stable"
+}
